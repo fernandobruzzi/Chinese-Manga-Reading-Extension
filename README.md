@@ -1,7 +1,32 @@
-#Chinese-Manga-Reading-Extension
+# Chinese Manga Reading Extension
 
-Since March of this year I started learning chinese by myself and to increase my immersion I decided to create a extension for my browser that allows me to get the readings of chinese characters on-demand reading on websites like bilibili manga and more! 
+A Chrome extension that shows the pinyin of Chinese words when you hover over them.
 
-This project is under development and is built to work with google chrome extensions. I plan to release it on the google extensions store once it's all done!
+In March of this year I started learning Chinese by myself, and to increase my
+immersion I decided to create a browser extension that gives me the readings of
+Chinese characters on demand, on regular websites and, in the future, on
+Bilibili Manga.
 
-The extension also aims to add a tone colouring to each word following the tone sandhi rules, and allow a playback button that is synced with forvo.
+## Status
+
+This project is under development. I plan to release it on the Chrome Web Store
+once it is done.
+
+### Working now
+- Hover over a word in regular page text to see its pinyin
+
+### Planned
+- Context-aware pinyin correction using the Gemini API
+- Tone colouring for each word following tone sandhi rules
+- OCR to support manga pages such as Bilibili Manga
+- Playback button synced with Forvo
+
+## How to try it
+
+1. Download or clone this repository
+2. Open chrome://extensions and turn on Developer mode
+3. Click "Load unpacked" and select the project folder
+
+## Credits
+
+Pinyin conversion by [pinyin-pro](https://github.com/zh-lx/pinyin-pro).
