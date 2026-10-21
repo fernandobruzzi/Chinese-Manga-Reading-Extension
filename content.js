@@ -149,6 +149,14 @@ function exitSelectionMode(){
 
 // here we have our pinyin box that shows the correct readings
 document.addEventListener("mousemove", (event) => {
+  
+  // we shouldn't have any pinyin balloons while selecting!
+  // that'w why we check on the beggining so we don't have any work
+  if(isSelecting){
+    hideTooltip();
+    return;
+  }
+
   // mouse position in pixels
   const x = event.clientX;
   const y = event.clientY;
@@ -263,13 +271,32 @@ document.addEventListener("keydown", (e)=> {
     document.documentElement.style.cursor = "crosshair";
   }
 });
+ 
 
+// Some browser actions like selecting text start on mousedown, before "click" arrives,
+// so they must be blocked here while selecting.
 document.addEventListener("mousedown", (e) =>{
-  // we should only start our selection box if we are in selection mode
-  if(!isSelecting){return;};
+  if(!isSelecting){
+    return
+  }
 
-  // stop the browser from selecting text while selecting
   e.preventDefault();
+  e.stopPropagation();
+} ,{capture:true});
+
+// Handles the selection clicks (first and second).
+// We use "click" because it is the last event of a mouse click, so selection
+// mode is still on when it arrives and we can stop links from opening.
+// We use capture so our listener runs before the page's own click listeners.
+document.addEventListener("click", (e) => {
+
+  if (!isSelecting){return;}
+
+  // stop the browser from following links
+  e.preventDefault();
+  // stop the page's own click listeners from receiving this click
+  e.stopPropagation();
+
   // first click
   if(startDragX === null){
     startDragX = e.clientX;
@@ -286,7 +313,7 @@ document.addEventListener("mousedown", (e) =>{
     console.log("selected region:", rect);
     exitSelectionMode();
   }
-});
+}, {capture: true});
 
 // here we define the shape of our selection box after moving our cursor while in selection mode
 document.addEventListener("mousemove", (e) => {
