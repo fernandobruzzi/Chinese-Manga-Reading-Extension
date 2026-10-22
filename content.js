@@ -310,7 +310,8 @@ document.addEventListener("click", (e) => {
   // second click
   else{
     const rect= getPositionSelectionBox(e);
-    console.log("selected region:", rect);
+    const message = {type: "captureRegion", rect: rect, screenRatio: devicePixelRatio};
+    chrome.runtime.sendMessage(message);
     exitSelectionMode();
   }
 }, {capture: true});
