@@ -3,7 +3,8 @@ const GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/interaction
 // const GEMINI_MODEL = "gemini-3.8-flash";
 const GEMINI_MODEL = "gemini-3.5-flash-lite";
 
-const OCR_PROMPT = "I want you to transcribe the simplified Mandarin text on the image. If the text is vertical, read it in columns from top to bottom, starting from the rightmost column. Don't give me the translation, nor the pinyin, nor any explanation and any formatting(don't give me any text written in bold). Return only the chinese text. DON'T ADD ANYTHING ELSE";
+// Prompt that we send to gemini in order to get the words in the image
+const OCR_PROMPT = "I want you to transcribe the simplified Mandarin text on the image. If the text is vertical, read it in columns from top to bottom, starting from the rightmost column. Don't give me the translation, nor the pinyin, nor any explanation and any formatting(don't give me any text written in bold). Return only the chinese text. DON'T ADD ANYTHING ELSE. Transcribe character by character exactly as written, even if a word looks unusual. Do not correct or replace characters with more common words.";
 
 // Crops the screenshot to the selected region.
 // rect is in CSS pixels; the screenshot is in device pixels, so we scale by ratio.
@@ -41,7 +42,7 @@ function blobToDataUrl(blob) {
   });
 }
 
-// Sends a text prompt to Gemini and returns the response object.
+// Sends our text prompt and the image to Gemini and returns the response object
 async function callGemini(prompt) {
     const apiKey = (await chrome.storage.local.get('apiKey')).apiKey; 
 
@@ -76,10 +77,10 @@ function getGeminiText(response){
 
 // Full flow for one selection: screenshot, crop, Gemini, recognized text.
 // A single try/catch handles errors from any step.
-async function handleCaptureRegion(rect, screenRatio, windowId) {
+async function handleCaptureRegion(rect, screenRatio, senderTab) {
   try {
-    const screenshot = await chrome.tabs.captureVisibleTab(windowId, { format: "png" });
-    const cropped = await cropScreenshot(screenshot, rect, screenRatio);      // 
+    const screenshot = await chrome.tabs.captureVisibleTab(senderTab.windowId, { format: "png" });
+    const cropped = await cropScreenshot(screenshot, rect, screenRatio);      
     const base64Data = cropped.split(",")[1];   // the part of cropped after the comma (.split)
 
     const response = await callGemini([
@@ -88,15 +89,18 @@ async function handleCaptureRegion(rect, screenRatio, windowId) {
     ]);
 
     const text = getGeminiText(response);
-    console.log("Recognized text:", text);
+    await chrome.tabs.sendMessage(senderTab.id, {type: "ocrResult", text: text});
   } catch (error) {
+    // we send the error too so it can be displayed instead of an endless "Reading" in our ocrPanel
     console.error(error);
+    chrome.tabs.sendMessage(senderTab.id, {type: "ocrError", error:error.message});
   }
 }
 
 
 console.log("Service worker started!");
 // Messages from content scripts (one per tab) all arrive here
+// Not async on purpose! The value returned by an onMessage listener has a meaning, so the async work runs in handleCaptureRegion
 chrome.runtime.onMessage.addListener((message, sender, sendResponse)=>{
     // runs every time any content script sends a message
     if(message.type !== "captureRegion"){
@@ -104,5 +108,5 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse)=>{
     }
     const rect = message.rect;
     const screenRatio = message.screenRatio;
-    handleCaptureRegion(rect, screenRatio, sender.tab.windowId);
+    handleCaptureRegion(rect, screenRatio, sender.tab);
 });

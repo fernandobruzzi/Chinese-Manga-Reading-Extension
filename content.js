@@ -54,6 +54,35 @@ document.body.appendChild(selectionBox);
 let startDragX = null;
 let startDragY = null;
 
+// Panel that shows the text recognized in the selected region
+// Unlike the tooltip, the panel must NOT have pointerEvents "none":
+// the mouse has to reach it to read the text and to close it.
+const ocrPanel = document.createElement("div");
+ocrPanel.style.position = "fixed";
+ocrPanel.style.border = "1px solid #413f3f";
+ocrPanel.style.color = "#fff";
+ocrPanel.style.padding = "4px 8px";
+ocrPanel.style.borderRadius = "6px";
+ocrPanel.style.fontSize = "18px";
+ocrPanel.style.background = "#413f3f";
+// so the pinyin is displayed on top of the ocrPanel
+ocrPanel.style.zIndex = "9999";
+ocrPanel.style.display = "none";
+ocrPanel.style.maxWidth = "400px";
+document.body.appendChild(ocrPanel);
+
+// the recognized text goes here (separate from the close button)
+const ocrPanelText = document.createElement("div");
+ocrPanel.appendChild(ocrPanelText);
+
+// close button
+const ocrPanelClose = document.createElement("button");
+ocrPanelClose.textContent = "×";
+ocrPanel.appendChild(ocrPanelClose);
+ocrPanelClose.addEventListener("click", () =>{
+  ocrPanel.style.display = "none";
+});
+
 // Hides the balloon and forgets the last hovered character. Without this reset,
 // moving back onto the same character would not show anything
 function hideTooltip(){
@@ -252,9 +281,11 @@ document.addEventListener("mousemove", (event) => {
 
 // we enter or exit our selection mode
 document.addEventListener("keydown", (e)=> {
-
   // if we press escape key we should exit the selection mode
   if(e.key === "Escape" &&  isSelecting) {
+    // some websites were blocking the escape function due to bubbling
+      e.preventDefault();
+      e.stopPropagation();
       exitSelectionMode();
       return;  
   }
@@ -270,7 +301,7 @@ document.addEventListener("keydown", (e)=> {
     isSelecting = true;
     document.documentElement.style.cursor = "crosshair";
   }
-});
+},{capture:true});
  
 
 // Some browser actions like selecting text start on mousedown, before "click" arrives,
@@ -312,6 +343,13 @@ document.addEventListener("click", (e) => {
     const rect= getPositionSelectionBox(e);
     const message = {type: "captureRegion", rect: rect, screenRatio: devicePixelRatio};
     chrome.runtime.sendMessage(message);
+    // since we need to wait sometime for the response from our API to arrive
+    // we decide to set the ocrPanel as "Reading..." on the idle time
+    ocrPanel.style.left = rect.left + "px";
+    ocrPanel.style.color = "#fff";
+    ocrPanel.style.top = rect.top + rect.height + 10 + "px"; 
+    ocrPanelText.textContent = "Reading...";
+    ocrPanel.style.display = "block";
     exitSelectionMode();
   }
 }, {capture: true});
@@ -329,4 +367,18 @@ document.addEventListener("mousemove", (e) => {
   selectionBox.style.height = rect.height + "px";
     
 });
+
+// Messages from the service worker (OCR results and errors)
+chrome.runtime.onMessage.addListener((message) => {
+  if(message.type === "ocrResult"){
+    // normal color, in case a previous error painted it red
+    ocrPanelText.style.color = "#fff";
+    ocrPanelText.textContent = message.text;
+  }
+  if(message.type === "ocrError"){
+   ocrPanelText.style.color = "#eb1010";
+   ocrPanelText.textContent = message.error;
+  }
+});
+
 
