@@ -1,3 +1,10 @@
+// URL to acess gemini
+const GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/interactions";
+// const GEMINI_MODEL = "gemini-3.8-flash";
+const GEMINI_MODEL = "gemini-3.5-flash-lite";
+
+const OCR_PROMPT = "I want you to transcribe the simplified Mandarin text on the image. If the text is vertical, read it in columns from top to bottom, starting from the rightmost column. Don't give me the translation, nor the pinyin, nor any explanation and any formatting(don't give me any text written in bold). Return only the chinese text. DON'T ADD ANYTHING ELSE";
+
 // Crops the screenshot to the selected region.
 // rect is in CSS pixels; the screenshot is in device pixels, so we scale by ratio.
 async function cropScreenshot(dataUrl, rect, ratio) {
@@ -34,6 +41,59 @@ function blobToDataUrl(blob) {
   });
 }
 
+// Sends a text prompt to Gemini and returns the response object.
+async function callGemini(prompt) {
+    const apiKey = (await chrome.storage.local.get('apiKey')).apiKey; 
+
+    const response = await fetch(GEMINI_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-goog-api-key": apiKey,
+    },
+    body: JSON.stringify({
+      model: GEMINI_MODEL,
+      input: prompt,
+    }),
+  });
+
+  // fetch only fails on network errors; an HTTP error (wrong key, rate limit)
+  // still "succeeds", so we check the status ourselves
+  if (!response.ok) {
+    throw new Error(`Gemini error ${response.status}: ${await response.text()}`);
+  }
+
+  return response.json();
+}
+
+// gets the generated text out of a gemini response, searching by type
+// instead of assuming positions, so extra steps don't break it
+function getGeminiText(response){
+    const outputStep = response.steps.find((s) => s.type==="model_output");
+    const text = outputStep.content.find((t)=> t.type === "text").text;
+    return text;
+}
+
+// Full flow for one selection: screenshot, crop, Gemini, recognized text.
+// A single try/catch handles errors from any step.
+async function handleCaptureRegion(rect, screenRatio, windowId) {
+  try {
+    const screenshot = await chrome.tabs.captureVisibleTab(windowId, { format: "png" });
+    const cropped = await cropScreenshot(screenshot, rect, screenRatio);      // 
+    const base64Data = cropped.split(",")[1];   // the part of cropped after the comma (.split)
+
+    const response = await callGemini([
+      {type: "text", text: OCR_PROMPT},
+      {type: "image", data: base64Data, mime_type: "image/png"}
+    ]);
+
+    const text = getGeminiText(response);
+    console.log("Recognized text:", text);
+  } catch (error) {
+    console.error(error);
+  }
+}
+
 
 console.log("Service worker started!");
 // Messages from content scripts (one per tab) all arrive here
@@ -44,24 +104,5 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse)=>{
     }
     const rect = message.rect;
     const screenRatio = message.screenRatio;
-    chrome.tabs.captureVisibleTab(sender.tab.windowId, { format: "png" })
-
-    .then((dataUrl) => {
-    // runs later, when the screenshot is ready
-        cropScreenshot(dataUrl, rect, screenRatio)
-        .then((croppedImageUrl)=> {
-                    // console.log(`Here is your result!: ${croppedImageUrl}`);
-                    console.log(`Here is the size of the crop: ${croppedImageUrl.lenght}`)
-                })
-        // catches any cropping errors
-        .catch((error)=>{
-                    console.error(error);
-                });
-    })
-    // catches any permission errors
-    .catch((error)=>{
-        console.error(error);
-    })
-
-    
+    handleCaptureRegion(rect, screenRatio, sender.tab.windowId);
 });
