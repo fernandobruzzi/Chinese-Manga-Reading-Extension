@@ -79,6 +79,14 @@ ocrPanel.appendChild(ocrPanelText);
 // Pronouns that usually come right before 得 when it means "must" (děi)
 const PRONOUNS_BEFORE_DEI = ["我", "你", "他", "她", "它", "我们", "你们", "他们", "她们", "咱们"];
 
+// Characters whose reading depends on the meaning of the sentence.
+// When one of them is a word by itself, the tooltip lists all its readings.
+const POLYPHONE_HINTS = {
+  "还": ["hái", "huán"],
+  "得": ["de", "dé", "děi"],
+  "了": ["le", "liǎo"],
+  "着": ["zhe", "zháo"],
+};
 
 // close button
 const ocrPanelClose = document.createElement("button");
@@ -313,9 +321,18 @@ document.addEventListener("mousemove", (event) => {
   const wordDictTones = readings.dictTones.slice(start,end);
   const wordSandhiTones = readings.sandhiTones.slice(start, end);
 
+  // some characters could have more than one reading and it's important to display it 
+  const hints = POLYPHONE_HINTS[hoveredWord.segment];
+
+  // empty unless the word is one suspicious character
+  let hintText = "";
+  if (hoveredWord.segment.length === 1 && hints !== undefined){
+    hintText = ` (also: ${hints.join(", ")})`;
+  }
+
   dictReadLine.textContent = `${hoveredWord.segment} | ${buildPinyin(wordSyllables, wordDictTones)}`;
   sandhiReadLine.textContent = `${hoveredWord.segment} | ${buildPinyin(wordSyllables,wordSandhiTones)}`;
-
+  dictReadLine.textContent += hintText;
   tooltip.style.left = x + 15 + "px";
   tooltip.style.top = y + 10 + "px";
   
