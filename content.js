@@ -56,7 +56,8 @@ let startDragY = null;
 
 // Panel that shows the text recognized in the selected region
 // Unlike the tooltip, the panel must NOT have pointerEvents "none":
-// the mouse has to reach it to read the text and to close it.
+// the mouse has to reach it to show the pinyin balloon over its
+// text and to click the close button
 const ocrPanel = document.createElement("div");
 ocrPanel.style.position = "fixed";
 ocrPanel.style.border = "1px solid #413f3f";
@@ -74,6 +75,10 @@ document.body.appendChild(ocrPanel);
 // the recognized text goes here (separate from the close button)
 const ocrPanelText = document.createElement("div");
 ocrPanel.appendChild(ocrPanelText);
+
+// Pronouns that usually come right before 得 when it means "must" (děi)
+const PRONOUNS_BEFORE_DEI = ["我", "你", "他", "她", "它", "我们", "你们", "他们", "她们", "咱们"];
+
 
 // close button
 const ocrPanelClose = document.createElement("button");
@@ -152,8 +157,11 @@ function buildPinyin(syllables, tones){
 function getReadings(text){
   const syllables = pinyinPro.pinyin(text, {toneType: "none", type: "array"});
   const dictTones = pinyinPro.pinyin(text, {pattern: "num", type: "array", toneSandhi:false});
-  const sandhiTones = applySandhi(text, dictTones);
-  return {syllables:syllables, dictTones:dictTones, sandhiTones:sandhiTones};
+  // first we need to apply the polyphone rules because they will determine the right tone and
+  // the right syllable of each character
+  const resultPolyphoneRules = applyPolyphoneRules(text, syllables, dictTones);
+  const sandhiTones = applySandhi(text, resultPolyphoneRules.tones);
+  return {syllables:resultPolyphoneRules.syllables, dictTones:resultPolyphoneRules.tones, sandhiTones:sandhiTones};
 }
 
 // The mouse can move in any direction from the first click, so the click is not
@@ -176,9 +184,45 @@ function exitSelectionMode(){
   document.documentElement.style.cursor = "";
 }
 
+// Fixes readings of 地 and 得 that pinyin-pro gets wrong when they are
+// grammatical particles. Uses word segments to tell a particle (慢慢地)
+// from a real word (土地). Returns corrected copies; inputs are not modified.
+function applyPolyphoneRules(text, syllables, tones) {
+  const fixedSyllables = [...syllables];
+  const fixedTones = [...tones];
+  const segments = [...segmenter.segment(text)];
+
+  for (let s = 0; s < segments.length; s++) {
+    const word = segments[s].segment;
+    // last character of the word
+    const last = word[word.length - 1];
+    const lastPos = segments[s].index + word.length - 1;
+
+    // R1: 地 alone in its segment -> particle "de"
+    if(last === "地" && word.length === 1){
+      fixedSyllables[lastPos] = "de";
+      fixedTones[lastPos] = "0";
+    }
+
+    // R2: 地 at the end of a segment, after two equal characters (慢慢地) -> "de"
+    if(last === "地" && word.length >= 3 && word[word.length-2] === word[word.length-3]){
+      fixedSyllables[lastPos] = "de";
+      fixedTones[lastPos] = "0";
+    }
+
+    // R3: 得 alone, right after a pronoun segment (我得) -> "děi"
+    if(word === "得" && s - 1 >= 0 && PRONOUNS_BEFORE_DEI.includes(segments[s-1].segment)){
+      fixedSyllables[lastPos] = "dei";
+      fixedTones[lastPos] = "3";
+    }
+  }
+
+  return { syllables: fixedSyllables, tones: fixedTones };
+}
+
+
 // here we have our pinyin box that shows the correct readings
-document.addEventListener("mousemove", (event) => {
-  
+document.addEventListener("mousemove", (event) => {  
   // we shouldn't have any pinyin balloons while selecting!
   // that'w why we check on the beggining so we don't have any work
   if(isSelecting){
