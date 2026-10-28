@@ -88,12 +88,15 @@ const POLYPHONE_HINTS = {
   "着": ["zhe", "zháo"],
 };
 
+let pinyinGeminiOcr = null;
+
 // close button
 const ocrPanelClose = document.createElement("button");
 ocrPanelClose.textContent = "×";
 ocrPanel.appendChild(ocrPanelClose);
 ocrPanelClose.addEventListener("click", () =>{
   ocrPanel.style.display = "none";
+  pinyinGeminiOcr = null;
 });
 
 // Hides the balloon and forgets the last hovered character. Without this reset,
@@ -160,16 +163,32 @@ function buildPinyin(syllables, tones){
   return parts.join(" ");
 }
 
-// takes a chinese text and returns, for every character its toneless 
-// syllable, its dictionary tone and its tone after sandhi
-function getReadings(text){
-  const syllables = pinyinPro.pinyin(text, {toneType: "none", type: "array"});
-  const dictTones = pinyinPro.pinyin(text, {pattern: "num", type: "array", toneSandhi:false});
-  // first we need to apply the polyphone rules because they will determine the right tone and
-  // the right syllable of each character
-  const resultPolyphoneRules = applyPolyphoneRules(text, syllables, dictTones);
-  const sandhiTones = applySandhi(text, resultPolyphoneRules.tones);
-  return {syllables:resultPolyphoneRules.syllables, dictTones:resultPolyphoneRules.tones, sandhiTones:sandhiTones};
+// takes a chinese text and returns, for every character, its toneless
+// syllable, its dictionary tone and its tone after sandhi.
+// geminiPinyin is optional: it only appears if we used OCR to get the text we
+// want to read
+function getReadings(text, geminiPinyin){
+  let syllables;
+  let dictTones;
+  let tones;
+
+  if(geminiPinyin === undefined || geminiPinyin === null ){
+    syllables = pinyinPro.pinyin(text, {toneType: "none", type: "array"});
+    dictTones = pinyinPro.pinyin(text, {pattern: "num", type: "array", toneSandhi:false});
+     // then we need to apply the polyphone rules because they will determine the 
+     // right tone and the right syllable of each character
+    const resultPolyphoneRules = applyPolyphoneRules(text, syllables, dictTones);
+    syllables = resultPolyphoneRules.syllables;
+    tones = resultPolyphoneRules.tones;
+  }
+  else{
+    const resultGemini = splitGeminiPinyin(geminiPinyin);
+    syllables = resultGemini.syllables;
+    tones = resultGemini.tones;
+  }
+
+  const sandhiTones = applySandhi(text, tones);
+  return {syllables:syllables, dictTones:tones, sandhiTones:sandhiTones};
 }
 
 // The mouse can move in any direction from the first click, so the click is not
@@ -228,6 +247,36 @@ function applyPolyphoneRules(text, syllables, tones) {
   return { syllables: fixedSyllables, tones: fixedTones };
 }
 
+// Splits Gemini's readings ("huan2") into syllables and tones, the same
+// format pinyin-pro gives us. Empty items (punctuation) stay empty.
+function splitGeminiPinyin(pinyinList) {
+  const syllables = [];
+  const tones = [];
+  for (let i = 0; i < pinyinList.length; i++) {
+    const p = pinyinList[i];
+    syllables.push(p.slice(0,-1));
+    tones.push(p.slice(-1));
+  }
+  return {syllables: syllables, tones: tones};
+}
+
+// we need to check whether the readings provided by Gemini are possible or not
+// still building this function!
+function checkGeminiReadings(text, syllable){
+  const correctedSyllables = [];
+  for(let i = 0 ; i < syllable.length; i++){
+    const s = syllable[i];
+    const possibleReadings = pinyin(text[i], { multiple: true });
+    if(possibleReadings.include(s)){
+      correctedSyllables.push(syllable[i]);
+    }
+    else{
+      // in case gemini isn't giving a possible reading we get the most common reading of the character
+      correctedSyllables.push(possibleReadings.split(" ")[0]);
+    }
+  }
+  return correctedSyllables;
+}
 
 // here we have our pinyin box that shows the correct readings
 document.addEventListener("mousemove", (event) => {  
@@ -312,7 +361,8 @@ document.addEventListener("mousemove", (event) => {
   }
 
   // compute readings for the whole node so sandhi can see neighboring words
-  const readings = getReadings(text);
+  // we only considerate pinyinGeminiOcr in case we have executed some OCR
+  const readings = getReadings(text, node.parentNode === ocrPanelText ? pinyinGeminiOcr : null);
 
   const start = hoveredWord.index;
   const end = start + hoveredWord.segment.length;
@@ -332,10 +382,14 @@ document.addEventListener("mousemove", (event) => {
 
   dictReadLine.textContent = `${hoveredWord.segment} | ${buildPinyin(wordSyllables, wordDictTones)}`;
   sandhiReadLine.textContent = `${hoveredWord.segment} | ${buildPinyin(wordSyllables,wordSandhiTones)}`;
-  dictReadLine.textContent += hintText;
+  // since some characters have multiple readings we add the possibilities in case 
+  // we haven't done any ocr
+  if(pinyinGeminiOcr === null){
+      dictReadLine.textContent += hintText;
+  }
+  
   tooltip.style.left = x + 15 + "px";
   tooltip.style.top = y + 10 + "px";
-  
   tooltip.style.display = "block";
 
 });
@@ -406,6 +460,7 @@ document.addEventListener("click", (e) => {
     chrome.runtime.sendMessage(message);
     // since we need to wait sometime for the response from our API to arrive
     // we decide to set the ocrPanel as "Reading..." on the idle time
+    pinyinGeminiOcr = null;
     ocrPanel.style.left = rect.left + "px";
     ocrPanel.style.color = "#fff";
     ocrPanel.style.top = rect.top + rect.height + 10 + "px"; 
@@ -433,12 +488,15 @@ document.addEventListener("mousemove", (e) => {
 chrome.runtime.onMessage.addListener((message) => {
   if(message.type === "ocrResult"){
     // normal color, in case a previous error painted it red
+    console.log(message);
     ocrPanelText.style.color = "#fff";
     ocrPanelText.textContent = message.text;
+    pinyinGeminiOcr = message.pinyin;
   }
   if(message.type === "ocrError"){
    ocrPanelText.style.color = "#eb1010";
    ocrPanelText.textContent = message.error;
+   pinyinGeminiOcr = null;
   }
 });
 

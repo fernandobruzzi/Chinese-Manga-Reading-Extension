@@ -3,8 +3,30 @@ const GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/interaction
 // const GEMINI_MODEL = "gemini-3.8-flash";
 const GEMINI_MODEL = "gemini-3.5-flash-lite";
 
-// Prompt that we send to gemini in order to get the words in the image
-const OCR_PROMPT = "I want you to transcribe the simplified Mandarin text on the image. If the text is vertical, read it in columns from top to bottom, starting from the rightmost column. Don't give me the translation, nor the pinyin, nor any explanation and any formatting(don't give me any text written in bold). Return only the chinese text. DON'T ADD ANYTHING ELSE. Transcribe character by character exactly as written, even if a word looks unusual. Do not correct or replace characters with more common words.";
+// Prompt sent with every screenshot. The schema (OCR_SCHEMA) forces the shape of the
+// answer; this text explains what goes inside each field.
+const OCR_PROMPT =
+  "Transcribe the Chinese text in the image into the field text. Transcribe character by character exactly as written, even if a word looks unusual. Do not correct or replace characters with more common words. " +
+  "If the text is vertical, read it in columns from top to bottom, starting from the rightmost column. " +
+  "In the pinyin field, give me the correct syllable of the word and a number indicating the tone. I want exactly one item per character of the text field, where element is a syllable. " +
+  "Write each reading with the format syllable + tone like 不是. → ['bu4', 'shi4', '']. " +
+  "Each tone corresponds to one number 0: neutral tone, 1: tone 1, 2: tone 2, 3: tone 3, 4: tone 4. Never use any number out of this range. " +            
+  "For punctuation, alphabetical letters and numbers you turn it into an empty string. " + "Particles are always on the neutral tone, like 了, 吗, 呢, 的 and 吧 at the end of a sentence. " +               
+  "For a character that has multiple readings give me the dictionary reading that best fits with the meaning in the sentence.";
+
+
+// The shape Gemini's answer must have: the text plus one reading per character
+const OCR_SCHEMA = {
+  type: "object",
+  properties: {
+    text: { type: "string" },
+    pinyin: {
+      type: "array",
+      items: { type: "string" },   // what each item of the list is
+    },
+  },
+  required: ["text", "pinyin"],   // which fields can never be missing
+};
 
 // Crops the screenshot to the selected region.
 // rect is in CSS pixels; the screenshot is in device pixels, so we scale by ratio.
@@ -43,7 +65,7 @@ function blobToDataUrl(blob) {
 }
 
 // Sends our text prompt and the image to Gemini and returns the response object
-async function callGemini(prompt) {
+async function callGemini(input, responseFormat) {
     const apiKey = (await chrome.storage.local.get('apiKey')).apiKey; 
 
     const response = await fetch(GEMINI_URL, {
@@ -54,8 +76,9 @@ async function callGemini(prompt) {
     },
     body: JSON.stringify({
       model: GEMINI_MODEL,
-      input: prompt,
-    }),
+      input: input,
+      response_format: responseFormat //is undefined if not specified and JSON.stringfy will remove this field in that case
+    })
   });
 
   // fetch only fails on network errors; an HTTP error (wrong key, rate limit)
@@ -70,6 +93,7 @@ async function callGemini(prompt) {
 // gets the generated text out of a gemini response, searching by type
 // instead of assuming positions, so extra steps don't break it
 function getGeminiText(response){
+
     const outputStep = response.steps.find((s) => s.type==="model_output");
     const text = outputStep.content.find((t)=> t.type === "text").text;
     return text;
@@ -82,14 +106,19 @@ async function handleCaptureRegion(rect, screenRatio, senderTab) {
     const screenshot = await chrome.tabs.captureVisibleTab(senderTab.windowId, { format: "png" });
     const cropped = await cropScreenshot(screenshot, rect, screenRatio);      
     const base64Data = cropped.split(",")[1];   // the part of cropped after the comma (.split)
-
+    
     const response = await callGemini([
       {type: "text", text: OCR_PROMPT},
       {type: "image", data: base64Data, mime_type: "image/png"}
-    ]);
+    ], 
+    {
+      type: "text",
+      mime_type: "application/json",
+      schema: OCR_SCHEMA
+      });
 
-    const text = getGeminiText(response);
-    await chrome.tabs.sendMessage(senderTab.id, {type: "ocrResult", text: text});
+    const ocrResult = JSON.parse(getGeminiText(response));
+    await chrome.tabs.sendMessage(senderTab.id, {type: "ocrResult", text: ocrResult.text, pinyin: ocrResult.pinyin});
   } catch (error) {
     // we send the error too so it can be displayed instead of an endless "Reading" in our ocrPanel
     console.error(error);
